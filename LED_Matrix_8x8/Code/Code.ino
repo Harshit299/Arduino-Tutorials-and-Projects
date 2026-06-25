@@ -1,141 +1,78 @@
-/* Program to display letter, digit and emoji */
+#include <MD_Parola.h>
+#include <MD_MAX72xx.h>
+#include <SPI.h>
 
-#include <LedControl.h>
+// FC16_HW is the most common for 8x8 matrix modules. 
+// If your text displays backward or upside down change this to GENERIC_HW or PAROLA_HW.
+#define HARDWARE_TYPE MD_MAX72XX::FC16_HW 
+#define MAX_DEVICES 1
+#define CS_PIN 9
+#define DATA_PIN 8
+#define CLK_PIN 10
 
-// DIN, CLK, CS, number of led matrix
-LedControl lc = LedControl(7, 5, 6, 1);
+// Initialize the Parola display object
+MD_Parola myDisplay = MD_Parola(HARDWARE_TYPE, DATA_PIN, CLK_PIN, CS_PIN, MAX_DEVICES);
 
-byte letterT[8] = {
-  B11111111,
-  B11111111,
-  B00011000,
-  B00011000,
-  B00011000,
-  B00011000,
-  B00011000,
-  B00011000
-};
+// First byte (8) represents the width of the character in columns
+// Further 8 bytes map the LED states column by column.
 
-byte smiley[8] = {
-  B00111100,
-  B01000010,
-  B10100101,
-  B10000001,
-  B10100101,
-  B10011001,
-  B01000010,
-  B00111100
-};
+// Smiley Frame 1 (Smile)
+uint8_t smileFrame1[] = { 8, 0x7E, 0x81, 0x95, 0xA1, 0xA1, 0x95, 0x81, 0x7E };
+// Smiley Frame 2 (Open Mouth)
+uint8_t smileFrame2[] = { 8, 0x7E, 0x81, 0x95, 0x91, 0x91, 0x95, 0x81, 0x7E };
+// Arrow (Pointing left to match left scrolling effect)
+uint8_t arrowSprite[] = { 8, 0x10, 0x38, 0x7C, 0xFE, 0x38, 0x38, 0x38, 0x38 };
 
-byte digit6[8] = {
-  B01111111,
-  B10000000,
-  B10000000,
-  B10000000,
-  B11111110,
-  B10000001,
-  B10000001,
-  B01111110
-};
+uint8_t animState = 0;
+uint8_t smileLoops = 0;
 
 void setup() {
-  lc.shutdown(0, false);      // Wake up MAX7219
-  lc.setIntensity(0, 8);      // Brightness (0–15)
-  lc.clearDisplay(0);         // Clear display
+  myDisplay.begin();
+  myDisplay.setIntensity(15); // Set brightness (0 to 15)
+
+  // Map our custom byte arrays to unused ASCII characters so the text engine can use them
+  myDisplay.addChar('$', smileFrame1);
+  myDisplay.addChar('&', smileFrame2);
+  myDisplay.addChar('>', arrowSprite);
+
+  // Start the very first animation (Scrolling Text)
+  // Syntax: displayText(text, alignment, speed, pause, effectIN, effectOUT)
+  myDisplay.displayText("The OHM Lab", PA_CENTER, 75, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
 }
 
 void loop() {
-  for (int row = 0; row < 8; row++) {
-    // lc.setRow(0, row, letterT[row]);
-    lc.setRow(0, row, digit6[row]);
-    lc.setRow(0, row, smiley[row]);
+  // displayAnimate() updates the matrix and returns TRUE when an animation fully finishes
+  if (myDisplay.displayAnimate()) {
+    
+    switch (animState) {
+      case 0: // State 0: Text just finished. Start Smiley Frame 1.
+        animState = 1;
+        smileLoops = 0;
+        // PA_PRINT displays it instantly. We hold it for 300ms.
+        myDisplay.displayText("$", PA_CENTER, 0, 300, PA_PRINT, PA_PRINT);
+        break;
+
+      case 1: // State 1: Swap to Smiley Frame 2
+        animState = 2;
+        myDisplay.displayText("&", PA_CENTER, 0, 300, PA_PRINT, PA_PRINT);
+        break;
+
+      case 2: // State 2: Check if we should loop the smile or move to the arrow
+        smileLoops++;
+        if (smileLoops < 3) { // Animate the mouth 3 times
+          animState = 1;
+          myDisplay.displayText("$", PA_CENTER, 0, 300, PA_PRINT, PA_PRINT);
+        } else {
+          animState = 3; // Move to Arrow
+          // Scroll the custom arrow character faster than the text (speed: 40)
+          myDisplay.displayText(">", PA_CENTER, 40, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        }
+        break;
+
+      case 3:
+        animState = 0;
+        myDisplay.displayText("The OHM Lab", PA_CENTER, 75, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        break;
+    }
   }
 }
-
-
-/* Program to display scrolling text */
-
-// #include <LedControl.h>
-
-// LedControl lc = LedControl(7, 5, 6, 1);
-
-// // 5x7 font - each byte is one column, LSB = top row
-// byte font[][5] = {
-//   {0x00,0x00,0x00,0x00,0x00}, // Space (0)
-//   {0x01,0x01,0x7F,0x01,0x01}, // T (1)
-//   {0x7F,0x08,0x08,0x08,0x70}, // h (2)
-//   {0x38,0x54,0x54,0x54,0x18}, // e (3)
-//   {0x3E,0x41,0x41,0x41,0x3E}, // O (4)
-//   {0x7F,0x08,0x08,0x08,0x7F}, // H (5)
-//   {0x7F,0x02,0x04,0x02,0x7F}, // M (6)
-//   {0x7F,0x40,0x40,0x40,0x40}, // L (7)
-//   {0x20,0x54,0x54,0x54,0x78}, // a (8)
-//   {0x7F,0x48,0x48,0x48,0x30}, // b (9)
-// };
-
-// int getCharIndex(char c) {
-//   switch(c) {
-//     case ' ': return 0;
-//     case 'T': return 1;
-//     case 'h': return 2;
-//     case 'e': return 3;
-//     case 'O': return 4;
-//     case 'H': return 5;
-//     case 'M': return 6;
-//     case 'L': return 7;
-//     case 'a': return 8;
-//     case 'b': return 9;
-//     default:  return 0;
-//   }
-// }
-
-// String message = "The OHM Lab ";  // trailing space clears display at end
-
-// byte reverseBits(byte b) {
-//   byte result = 0;
-//   for (int i = 0; i < 8; i++) {
-//     result = (result << 1) | (b & 1);
-//     b >>= 1;
-//   }
-//   return result;
-// }
-
-// // Get the byte for a specific column of a character (col 5 = blank spacer)
-// byte getColumn(char c, int col) {
-//   if (col >= 5) return 0x00;
-//   return reverseBits(font[getCharIndex(c)][col]);
-// }
-
-// void setup() {
-//   lc.shutdown(0, false);
-//   lc.setIntensity(0, 8);
-//   lc.clearDisplay(0);
-// }
-
-// void loop() {
-//   scrollText(message);
-// }
-
-// void scrollText(String text) {
-//   int totalCols = text.length() * 6;  // each char = 5 cols + 1 space
-
-//   for (int offset = 0; offset < totalCols; offset++) {
-//     // For each of the 8 display columns, finding which column to show
-//     for (int dispCol = 0; dispCol < 8; dispCol++) {
-//       int srcCol = offset + dispCol;  // which column of the full message
-
-//       byte colData = 0x00;
-//       if (srcCol < totalCols) {
-//         int charIndex  = srcCol / 6;   // which character
-//         int charCol    = srcCol % 6;   // which column within that character
-//         if (charIndex < text.length()) {
-//           colData = getColumn(text[charIndex], charCol);
-//         }
-//       }
-
-//       lc.setColumn(0, dispCol, colData);
-//     }
-
-//     delay(80);  // scroll speed — lower = faster
-//   }
-// }
