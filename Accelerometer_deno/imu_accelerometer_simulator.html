@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IMU Accelerometer Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Fira+Code:wght@400;600&display=swap" rel="stylesheet">
+    
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; font-family: 'Inter', sans-serif; }
+        .font-mono { font-family: 'Fira Code', monospace; }
+        
+        /* 3D Label Styling */
+        .label-3d {
+            position: absolute;
+            top: 0; left: 0;
+            transform: translate(-50%, -50%);
+            font-size: 0.85rem;
+            font-weight: 600;
+            pointer-events: none;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.8), 0 0 2px rgba(0,0,0,1);
+            white-space: nowrap;
+            z-index: 10;
+        }
+
+        /* Custom Slider Styling */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #ffffff;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 4px rgba(0,0,0,0.8);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #4B5563;
+            border-radius: 2px;
+        }
+        input[type=range]:focus { outline: none; }
+    </style>
+</head>
+<body class="text-gray-100">
+
+    <div id="canvas-container" class="absolute inset-0 z-0"></div>
+
+    <!-- 3D Labels (Dynamically positioned via JS) -->
+    <div id="label-x" class="label-3d text-red-400">X (Ax)</div>
+    <div id="label-y" class="label-3d text-green-400">Y (Ay)</div>
+    <div id="label-z" class="label-3d text-blue-400">Z (Az)</div>
+    <div id="label-gravity" class="label-3d text-orange-400">1g Gravity</div>
+    <div id="label-reaction" class="label-3d text-orange-400">Reaction (+1g)</div>
+
+    <!-- Interactive UI Overlay -->
+    <div class="absolute inset-y-0 right-0 z-20 w-full max-w-[340px] p-4 pointer-events-none flex flex-col justify-start">
+        <div class="bg-[#1a1a1a]/95 backdrop-blur-md p-5 rounded-xl shadow-2xl border border-gray-700/50 pointer-events-auto flex flex-col gap-5">
+            
+            <div>
+                <h1 class="text-lg font-semibold text-white mb-1">IMU Kinematics</h1>
+                <p class="text-xs text-gray-400">Roll (X) | Pitch (Y) standard convention</p>
+            </div>
+
+            <!-- Controls -->
+            <div class="flex flex-col gap-4 bg-black/40 p-3 rounded-lg border border-gray-800">
+                <div>
+                    <div class="flex justify-between mb-1">
+                        <label class="text-sm font-semibold text-red-400">Roll (X-Axis)</label>
+                        <span id="roll-val" class="text-sm font-mono text-red-400">0°</span>
+                    </div>
+                    <input type="range" id="roll-slider" min="-90" max="90" value="0">
+                </div>
+                <div>
+                    <div class="flex justify-between mb-1">
+                        <label class="text-sm font-semibold text-green-400">Pitch (Y-Axis)</label>
+                        <span id="pitch-val" class="text-sm font-mono text-green-400">0°</span>
+                    </div>
+                    <input type="range" id="pitch-slider" min="-90" max="90" value="0">
+                </div>
+                <div class="flex justify-end mt-1">
+                    <button id="reset-btn" class="text-xs px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-white transition-colors">Reset</button>
+                </div>
+            </div>
+
+            <!-- Measured Forces -->
+            <div>
+                <h2 class="text-xs uppercase tracking-wider font-semibold text-gray-500 mb-2">Simulated Forces (g)</h2>
+                <div class="grid grid-cols-3 gap-2 text-center">
+                    <div class="bg-red-900/10 border border-red-500/20 p-2 rounded">
+                        <div class="text-[10px] text-red-400 font-semibold">Ax</div>
+                        <div id="ax-val" class="text-sm font-mono mt-1">0.00</div>
+                    </div>
+                    <div class="bg-green-900/10 border border-green-500/20 p-2 rounded">
+                        <div class="text-[10px] text-green-400 font-semibold">Ay</div>
+                        <div id="ay-val" class="text-sm font-mono mt-1">0.00</div>
+                    </div>
+                    <div class="bg-blue-900/10 border border-blue-500/20 p-2 rounded">
+                        <div class="text-[10px] text-blue-400 font-semibold">Az</div>
+                        <div id="az-val" class="text-sm font-mono mt-1">1.00</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Calculated Math -->
+            <div>
+                <h2 class="text-xs uppercase tracking-wider font-semibold text-gray-500 mb-2">Trigonometry Recovery</h2>
+                <div class="bg-black/50 border border-gray-800 p-3 rounded flex flex-col gap-3 font-mono text-[11px]">
+                    <div>
+                        <div class="text-gray-400 mb-1">Roll ($\phi$) around <span class="text-red-400">X</span></div>
+                        <div class="text-gray-300">
+                            atan2(<span class="text-green-400">Ay</span>, <span class="text-blue-400">Az</span>) <br>
+                            = <span id="calc-roll" class="text-white font-bold text-sm">0.0°</span>
+                        </div>
+                    </div>
+                    <div class="border-t border-gray-800 pt-2">
+                        <div class="text-gray-400 mb-1">Pitch ($\theta$) around <span class="text-green-400">Y</span></div>
+                        <div class="text-gray-300 leading-relaxed">
+                            atan2(-<span class="text-red-400">Ax</span>, &radic;(<span class="text-green-400">Ay</span>&sup2;+<span class="text-blue-400">Az</span>&sup2;)) <br>
+                            = <span id="calc-pitch" class="text-white font-bold text-sm">0.0°</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const rollSlider = document.getElementById('roll-slider');
+        const pitchSlider = document.getElementById('pitch-slider');
+        const labels = {
+            roll: document.getElementById('roll-val'),
+            pitch: document.getElementById('pitch-val'),
+            ax: document.getElementById('ax-val'),
+            ay: document.getElementById('ay-val'),
+            az: document.getElementById('az-val'),
+            calcRoll: document.getElementById('calc-roll'),
+            calcPitch: document.getElementById('calc-pitch'),
+            x: document.getElementById('label-x'),
+            y: document.getElementById('label-y'),
+            z: document.getElementById('label-z'),
+            gravity: document.getElementById('label-gravity'),
+            reaction: document.getElementById('label-reaction')
+        };
+        const resetBtn = document.getElementById('reset-btn');
+
+        // Three.js Core Setup
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#111111');
+
+        // Camera
+        const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(6, 4, 8); // Start with a nice 3/4 view
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.target.set(0, 0, 0);
+
+        // Lighting to emphasize glossy PCB
+        scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(5, 10, 2);
+        scene.add(dirLight);
+        const blueLight = new THREE.PointLight(0x40a0ff, 1, 10);
+        blueLight.position.set(-2, 2, 2);
+        scene.add(blueLight);
+
+        // Create a root group rotated so Z is UP (matching standard IMU kinematics)
+        // Three.js default is Y-up. By rotating -90 on X, the XY plane becomes the ground, and Z points to the sky.
+        const worldGroup = new THREE.Group();
+        worldGroup.rotation.x = -Math.PI / 2;
+        scene.add(worldGroup);
+
+        // Dark Polar Grid (like in the reference image)
+        const polarGrid = new THREE.PolarGridHelper(6, 16, 6, 64, 0x444455, 0x222233);
+        polarGrid.rotation.x = Math.PI / 2; // Flatten it on the XY plane inside the worldGroup
+        worldGroup.add(polarGrid);
+
+        // Main Board Group (this will rotate)
+        const boardGroup = new THREE.Group();
+        // Important: Standard aerospace rotation order ZYX. We only use Pitch(Y) and Roll(X).
+        // Setting order to 'ZYX' ensures rotations apply correctly intuitively.
+        boardGroup.rotation.order = 'ZYX'; 
+        worldGroup.add(boardGroup);
+
+        // 1. PCB (Blue box)
+        const pcbWidth = 2.4;
+        const pcbLength = 3.0;
+        const pcbThickness = 0.08;
+        const pcbMat = new THREE.MeshStandardMaterial({ 
+            color: 0x1d4ed8, // Deep blue
+            roughness: 0.3, 
+            metalness: 0.5 
+        });
+        const pcb = new THREE.Mesh(new THREE.BoxGeometry(pcbWidth, pcbLength, pcbThickness), pcbMat);
+        boardGroup.add(pcb);
+
+        // Gold edge layer below PCB
+        const goldMat = new THREE.MeshStandardMaterial({ color: 0xca8a04, roughness: 0.4, metalness: 0.8 });
+        const goldLayer = new THREE.Mesh(new THREE.BoxGeometry(pcbWidth, pcbLength, 0.02), goldMat);
+        goldLayer.position.z = -0.05;
+        boardGroup.add(goldLayer);
+
+        // PCB Mounting Holes
+        const holeGeo = new THREE.CylinderGeometry(0.1, 0.1, pcbThickness + 0.04, 16);
+        const holeMat = new THREE.MeshBasicMaterial({ color: 0x050505 });
+        const hw = pcbWidth / 2 - 0.25;
+        const hl = pcbLength / 2 - 0.25;
+        const holePositions = [
+            [hw, hl], [-hw, hl], [hw, -hl], [-hw, -hl]
+        ];
+        holePositions.forEach(pos => {
+            const hole = new THREE.Mesh(holeGeo, holeMat);
+            hole.rotation.x = Math.PI / 2;
+            hole.position.set(pos[0], pos[1], 0);
+            boardGroup.add(hole);
+        });
+
+        // 2. IC Sensor Chip (Black Box)
+        const icGeo = new THREE.BoxGeometry(0.8, 0.8, 0.12);
+        const icMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2, metalness: 0.8 });
+        const ic = new THREE.Mesh(icGeo, icMat);
+        ic.position.z = pcbThickness / 2 + 0.06;
+        boardGroup.add(ic);
+
+        // Pin 1 Indicator (Tiny Orange Dot)
+        const dotGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.02, 16);
+        const dotMat = new THREE.MeshBasicMaterial({ color: 0xf97316 }); // Orange
+        const dot = new THREE.Mesh(dotGeo, dotMat);
+        dot.rotation.x = Math.PI / 2;
+        dot.position.set(0.3, 0.3, ic.position.z + 0.06); // Top-right corner of IC
+        boardGroup.add(dot);
+
+        // Helper to create thick arrows (Standard Three.js ArrowHelper is too thin)
+        function createThickArrow(dir, color, length, radius, addCenterSphere=false) {
+            const group = new THREE.Group();
+            const mat = new THREE.MeshPhongMaterial({ color: color, shininess: 100 });
+            
+            // Shaft
+            const cylGeo = new THREE.CylinderGeometry(radius, radius, length - radius * 6, 16);
+            const cylinder = new THREE.Mesh(cylGeo, mat);
+            cylinder.position.y = (length - radius * 6) / 2;
+            
+            // Head
+            const coneGeo = new THREE.ConeGeometry(radius * 2.5, radius * 6, 16);
+            const cone = new THREE.Mesh(coneGeo, mat);
+            cone.position.y = length - radius * 3;
+            
+            if(addCenterSphere) {
+                const sphere = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.5, 16, 16), mat);
+                group.add(sphere);
+            }
+
+            group.add(cylinder);
+            group.add(cone);
+            
+            // Align the Y-up arrow geometry to the requested direction
+            const axis = new THREE.Vector3(0, 1, 0);
+            group.quaternion.setFromUnitVectors(axis, dir.clone().normalize());
+            return group;
+        }
+
+        const arrowLen = 2.0;
+        const arrowRad = 0.04;
+
+        // Local Axes (Attached to Board)
+        const xAxis = createThickArrow(new THREE.Vector3(1,0,0), 0xf87171, arrowLen, arrowRad); // Red (X)
+        const yAxis = createThickArrow(new THREE.Vector3(0,1,0), 0x4ade80, arrowLen, arrowRad); // Green (Y)
+        const zAxis = createThickArrow(new THREE.Vector3(0,0,1), 0x60a5fa, arrowLen, arrowRad); // Blue (Z)
+        boardGroup.add(xAxis, yAxis, zAxis);
+
+        // Global Forces (Attached to World Group, Fixed)
+        // Gravity pointing DOWN (-Z)
+        const gravityArrow = createThickArrow(new THREE.Vector3(0,0,-1), 0xf97316, 2.5, 0.03);
+        // Start gravity arrow slightly below the board to show it pulling down
+        gravityArrow.position.z = -0.5;
+        worldGroup.add(gravityArrow);
+
+        // Reaction Force pointing UP (+Z)
+        const reactionArrow = createThickArrow(new THREE.Vector3(0,0,1), 0xf97316, 2.5, 0.03);
+        // Start reaction arrow slightly above the board
+        reactionArrow.position.z = 0.5; 
+        worldGroup.add(reactionArrow);
+
+
+        // Vectors to track arrow tips for HTML Labels
+        const targetX = new THREE.Vector3(arrowLen, 0, 0);
+        const targetY = new THREE.Vector3(0, arrowLen, 0);
+        const targetZ = new THREE.Vector3(0, 0, arrowLen);
+        const targetGrav = new THREE.Vector3(0, 0, -3.0); // Tip of gravity
+        const targetReact = new THREE.Vector3(0, 0, 3.0); // Tip of reaction
+
+        const globalReactionVector = new THREE.Vector3(0, 0, 1); // Fixed +1g reaction in Z-up world
+
+        function updateSimulation() {
+            // Read inputs
+            const rollDeg = parseFloat(rollSlider.value);
+            const pitchDeg = parseFloat(pitchSlider.value);
+            
+            // Update slider labels
+            labels.roll.innerText = rollDeg.toFixed(0) + '°';
+            labels.pitch.innerText = pitchDeg.toFixed(0) + '°';
+
+            // Convert to Radians
+            const rollRad = THREE.MathUtils.degToRad(rollDeg);
+            const pitchRad = THREE.MathUtils.degToRad(pitchDeg);
+
+            // Apply rotations matching conventional user request: 
+            // Roll about X-axis, Pitch about Y-axis
+            boardGroup.rotation.x = rollRad;
+            boardGroup.rotation.y = pitchRad;
+
+            // --- THE CORE IMU MATH ---
+            // The accelerometer measures the REACTION force (which points straight UP globally).
+            // To find out what the sensor feels, we take the global upward vector and apply 
+            // the INVERSE of the sensor's current rotation.
+            const invQuat = boardGroup.quaternion.clone().invert();
+            const localForce = globalReactionVector.clone().applyQuaternion(invQuat);
+            
+            const ax = localForce.x;
+            const ay = localForce.y;
+            const az = localForce.z;
+
+            // Update Force UI
+            labels.ax.innerText = ax.toFixed(2);
+            labels.ay.innerText = ay.toFixed(2);
+            labels.az.innerText = az.toFixed(2);
+
+            // --- THE REVERSE KINEMATICS ---
+            // Equations provided by user:
+            // Roll = atan2(Ay, Az)
+            // Pitch = atan2(-Ax, sqrt(Ay*Ay + Az*Az))
+            const calcRollRad = Math.atan2(ay, az);
+            const calcPitchRad = Math.atan2(-ax, Math.sqrt(ay*ay + az*az));
+
+            const calcRollDeg = THREE.MathUtils.radToDeg(calcRollRad);
+            const calcPitchDeg = THREE.MathUtils.radToDeg(calcPitchRad);
+
+            // Update Math UI (Adding absolute zero check to avoid -0.0)
+            labels.calcRoll.innerText = (Math.abs(calcRollDeg) < 0.1 ? 0.0 : calcRollDeg).toFixed(1) + '°';
+            labels.calcPitch.innerText = (Math.abs(calcPitchDeg) < 0.1 ? 0.0 : calcPitchDeg).toFixed(1) + '°';
+        }
+
+        // Helper to project 3D point to 2D screen space for labels
+        function updateLabelPosition(element, localVector, referenceObject) {
+            const worldVec = localVector.clone();
+            if(referenceObject) {
+                referenceObject.localToWorld(worldVec);
+            }
+            worldVec.project(camera);
+            
+            // Check if behind camera
+            if (worldVec.z > 1.0) {
+                element.style.display = 'none';
+                return;
+            }
+            
+            element.style.display = 'block';
+            const x = (worldVec.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (worldVec.y * -0.5 + 0.5) * window.innerHeight;
+            element.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
+        }
+
+        // Events
+        rollSlider.addEventListener('input', updateSimulation);
+        pitchSlider.addEventListener('input', updateSimulation);
+        
+        resetBtn.addEventListener('click', () => {
+            rollSlider.value = 0;
+            pitchSlider.value = 0;
+            updateSimulation();
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Initialize math state
+        updateSimulation();
+
+        // Main Render Loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            
+            // Update dynamic HTML labels to track 3D points
+            updateLabelPosition(labels.x, targetX, boardGroup);
+            updateLabelPosition(labels.y, targetY, boardGroup);
+            updateLabelPosition(labels.z, targetZ, boardGroup);
+            updateLabelPosition(labels.gravity, targetGrav, worldGroup);
+            updateLabelPosition(labels.reaction, targetReact, worldGroup);
+
+            renderer.render(scene, camera);
+        }
+        
+        // Start loop
+        animate();
+    </script>
+</body>
+</html>
